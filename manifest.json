@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Custom Recommendations",
+  "version": "1.0.0",
+  "description": "Replace YouTube recommendation feeds with prompt-driven search results.",
+  "permissions": ["scripting", "storage"],
+  "host_permissions": ["*://*.youtube.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

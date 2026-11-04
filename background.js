@@ -3,8 +3,6 @@
  */
 
 const YT_SEARCH_URL = 'https://www.youtube.com/results?search_query=';
-/** YouTube search filter: type = Shorts */
-const YT_SEARCH_SHORTS_SP = 'EgIQAQ%3D%3D';
 const DEFAULT_MAX_BOOST = 48;
 const DEFAULT_MAX_REPLACE = 24;
 
@@ -97,39 +95,16 @@ function getTextRuns(obj) {
 function pickThumbnail(thumbnail) {
   const thumbs = thumbnail?.thumbnails;
   if (!Array.isArray(thumbs) || thumbs.length === 0) return '';
-  return thumbs[thumbs.length - 1].url || thumbs[0].url || '';
+
+  const byWidth = [...thumbs].sort((a, b) => (a.width || 0) - (b.width || 0));
+  const nearHq = byWidth.find((t) => (t.width || 0) >= 320 && (t.width || 0) <= 480);
+  if (nearHq?.url) return nearHq.url;
+
+  const mid = byWidth[Math.floor(byWidth.length / 2)];
+  return mid?.url || byWidth[byWidth.length - 1]?.url || thumbs[0]?.url || '';
 }
 
-function parseDurationSeconds(text) {
-  if (!text || typeof text !== 'string') return 0;
-  const parts = text.trim().split(':').map((p) => parseInt(p, 10));
-  if (parts.some((n) => Number.isNaN(n))) return 0;
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 1) return parts[0];
-  return 0;
-}
-
-function rendererWatchUrl(renderer) {
-  const nep = renderer?.navigationEndpoint;
-  return nep?.commandMetadata?.webCommandMetadata?.url || '';
-}
-
-function isShortVideoRenderer(renderer) {
-  if (!renderer?.videoId) return false;
-
-  const url = rendererWatchUrl(renderer);
-  if (typeof url === 'string' && url.includes('/shorts/')) return true;
-
-  if (renderer.navigationEndpoint?.reelWatchEndpoint?.videoId) return true;
-
-  const lenSec = parseDurationSeconds(getTextRuns(renderer.lengthText));
-  if (lenSec > 0 && lenSec <= 60) return true;
-
-  return false;
-}
-
-function videoFromRenderer(renderer, extra = {}) {
+function videoFromRenderer(renderer) {
   if (!renderer || renderer.videoId == null) return null;
 
   const title = getTextRuns(renderer.title);
@@ -139,39 +114,19 @@ function videoFromRenderer(renderer, extra = {}) {
     getTextRuns(renderer.shortBylineText) ||
     '';
 
-  const isShort = Boolean(extra.isShort) || isShortVideoRenderer(renderer);
+  let thumbnailUrl = pickThumbnail(renderer.thumbnail);
+  if (!thumbnailUrl) {
+    thumbnailUrl = `https://i.ytimg.com/vi/${renderer.videoId}/hqdefault.jpg`;
+  }
 
   return {
     videoId: renderer.videoId,
     title: title || 'Untitled',
     channel,
-    thumbnailUrl: pickThumbnail(renderer.thumbnail),
+    thumbnailUrl,
     viewCount:
       getTextRuns(renderer.viewCountText) || getTextRuns(renderer.shortViewCountText) || '',
     publishedTime: getTextRuns(renderer.publishedTimeText),
-    isShort,
-  };
-}
-
-function videoFromReelRenderer(reel) {
-  if (!reel) return null;
-  const videoId = reel.videoId || reel.navigationEndpoint?.reelWatchEndpoint?.videoId;
-  if (!videoId) return null;
-
-  const title =
-    getTextRuns(reel.headline) ||
-    getTextRuns(reel.accessibility?.accessibilityData?.label) ||
-    getTextRuns(reel.title) ||
-    'Short';
-
-  return {
-    videoId,
-    title,
-    channel: getTextRuns(reel.shortBylineText) || getTextRuns(reel.byline) || '',
-    thumbnailUrl: pickThumbnail(reel.thumbnail),
-    viewCount: getTextRuns(reel.viewCountText) || getTextRuns(reel.shortViewCountText) || '',
-    publishedTime: getTextRuns(reel.publishedTimeText) || '',
-    isShort: true,
   };
 }
 
@@ -195,26 +150,6 @@ function collectVideoRenderers(node, out) {
   }
 }
 
-function collectReelItemRenderers(node, out) {
-  if (!node || typeof node !== 'object') return;
-
-  if (node.reelItemRenderer) {
-    out.push(node.reelItemRenderer);
-  }
-
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      collectReelItemRenderers(item, out);
-    }
-    return;
-  }
-
-  for (const key of Object.keys(node)) {
-    if (key === 'reelItemRenderer') continue;
-    collectReelItemRenderers(node[key], out);
-  }
-}
-
 function parseSearchResults(initialData, limit) {
   const renderers = [];
   collectVideoRenderers(initialData, renderers);
@@ -233,112 +168,13 @@ function parseSearchResults(initialData, limit) {
   return videos;
 }
 
-function pickThumbnailFromNode(node) {
-  if (!node || typeof node !== 'object') return '';
-  return (
-    pickThumbnail(node.thumbnail) ||
-    pickThumbnail(node.contentImage?.thumbnailRenderer?.thumbnail) ||
-    pickThumbnail(node.thumbnailViewModel?.image) ||
-    pickThumbnail(node.onTap?.inlinePlayerData?.thumbnail) ||
-    ''
-  );
-}
-
-function videoFromReelWatchNode(node) {
-  const videoId = node.navigationEndpoint?.reelWatchEndpoint?.videoId;
-  if (!videoId) return null;
-
-  const title =
-    getTextRuns(node.title) ||
-    getTextRuns(node.headline) ||
-    getTextRuns(node.overlayMetadata?.primaryMetadata?.metadataParts?.[0]?.text) ||
-    getTextRuns(node.accessibility?.accessibilityData?.label) ||
-    'Short';
-
-  const thumbnailUrl = pickThumbnailFromNode(node);
-  if (!thumbnailUrl) return null;
-
-  return {
-    videoId,
-    title,
-    channel: getTextRuns(node.shortBylineText) || getTextRuns(node.byline) || '',
-    thumbnailUrl,
-    viewCount: getTextRuns(node.viewCountText) || getTextRuns(node.shortViewCountText) || '',
-    publishedTime: getTextRuns(node.publishedTimeText) || '',
-    isShort: true,
-  };
-}
-
-function collectDeepReelWatchVideos(node, out, seenIds, depth = 0) {
-  if (!node || typeof node !== 'object' || depth > 55) return;
-
-  const v = videoFromReelWatchNode(node);
-  if (v && !seenIds.has(v.videoId)) {
-    seenIds.add(v.videoId);
-    out.push(v);
-  }
-
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      collectDeepReelWatchVideos(item, out, seenIds, depth + 1);
-    }
-    return;
-  }
-
-  for (const key of Object.keys(node)) {
-    collectDeepReelWatchVideos(node[key], out, seenIds, depth + 1);
-  }
-}
-
-function parseShortsSearchResults(initialData, limit) {
-  const reels = [];
-  collectReelItemRenderers(initialData, reels);
-
-  const renderers = [];
-  collectVideoRenderers(initialData, renderers);
-
-  const deepReel = [];
-  const deepSeen = new Set();
-  collectDeepReelWatchVideos(initialData, deepReel, deepSeen);
-
-  const seen = new Set();
-  const videos = [];
-
-  function pushVideo(v) {
-    if (!v?.videoId || !v.isShort || seen.has(v.videoId)) return false;
-    seen.add(v.videoId);
-    videos.push(v);
-    return videos.length >= limit;
-  }
-
-  for (const reel of reels) {
-    const v = videoFromReelRenderer(reel);
-    if (pushVideo(v)) return videos;
-  }
-
-  for (const v of deepReel) {
-    if (pushVideo(v)) return videos;
-  }
-
-  for (const r of renderers) {
-    if (!isShortVideoRenderer(r)) continue;
-    const v = videoFromRenderer(r, { isShort: true });
-    if (pushVideo(v)) return videos;
-  }
-
-  return videos;
-}
-
-async function fetchSearchVideosOnce(searchTerm, limit, options = {}) {
+async function fetchSearchVideos(searchTerm, limit) {
   const query = encodeURIComponent(String(searchTerm).trim());
   if (!query) {
     return { ok: false, error: 'Empty search term' };
   }
 
-  let url = `${YT_SEARCH_URL}${query}`;
-  if (options.shortsOnly && options.useShortsSp !== false) {
-    url += `&sp=${options.shortsSp || YT_SEARCH_SHORTS_SP}`;
-  }
+  const url = `${YT_SEARCH_URL}${query}`;
 
   try {
     const response = await fetch(url, {
@@ -357,15 +193,10 @@ async function fetchSearchVideosOnce(searchTerm, limit, options = {}) {
       return { ok: false, error: 'Could not parse ytInitialData from search page' };
     }
 
-    const videos = options.shortsOnly
-      ? parseShortsSearchResults(initialData, limit)
-      : parseSearchResults(initialData, limit);
+    const videos = parseSearchResults(initialData, limit);
 
     if (videos.length === 0) {
-      return {
-        ok: false,
-        error: options.shortsOnly ? 'No Shorts found for this search' : 'No videos found for this search',
-      };
+      return { ok: false, error: 'No videos found for this search' };
     }
 
     return { ok: true, videos };
@@ -374,36 +205,10 @@ async function fetchSearchVideosOnce(searchTerm, limit, options = {}) {
   }
 }
 
-async function fetchSearchVideos(searchTerm, limit, options = {}) {
-  if (!options.shortsOnly) {
-    return fetchSearchVideosOnce(searchTerm, limit, options);
-  }
-
-  const attempts = [
-    { term: searchTerm, useShortsSp: true, shortsSp: YT_SEARCH_SHORTS_SP },
-    { term: searchTerm, useShortsSp: true, shortsSp: 'EgIYAQ%3D%3D' },
-    { term: `${searchTerm} #shorts`, useShortsSp: false },
-    { term: `${searchTerm} shorts`, useShortsSp: false },
-  ];
-
-  let last = { ok: false, error: 'No Shorts found for this search' };
-  for (const attempt of attempts) {
-    last = await fetchSearchVideosOnce(attempt.term, limit, {
-      shortsOnly: true,
-      useShortsSp: attempt.useShortsSp,
-      shortsSp: attempt.shortsSp,
-    });
-    if (last.ok && last.videos.length > 0) {
-      return last;
-    }
-  }
-  return last;
-}
-
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FETCH_BOOST') {
     const limit = message.maxBoost || DEFAULT_MAX_BOOST;
-    fetchSearchVideos(message.searchTerm, limit, { shortsOnly: Boolean(message.shortsOnly) })
+    fetchSearchVideos(message.searchTerm, limit)
       .then(sendResponse)
       .catch((err) => sendResponse({ ok: false, error: err.message || 'Unknown error' }));
     return true;

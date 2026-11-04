@@ -5,6 +5,7 @@
   const FORM_ID = 'yt-custom-rec-form-root';
   const STORAGE_KEY = 'ytCustomRecLastPrompt';
   const PLAN_KEY = 'ytCustomRecPlan';
+  const UI_COLLAPSED_KEY = 'ytCustomRecUiCollapsed';
   const SLOT_ATTR = 'data-yt-custom-rec-hidden-slot';
 
   const INSERT_EVERY = 4;
@@ -12,10 +13,6 @@
   const MAX_TOPICS = 3;
   const FIRST_ROW_SLOTS = 3;
   const STATUS_PIN_MS = 6000;
-  const SHORTS_PER_SHELF = 6;
-  const REEL_SLOT_ATTR = 'data-yt-custom-rec-hidden-reel';
-
-  const HOME_TARGET = { mode: 'rich' };
 
   let lastPath = location.pathname + location.search;
   let fetchInFlight = false;
@@ -185,14 +182,21 @@
     root.id = FORM_ID;
     root.innerHTML = `
       <form class="yt-custom-rec-form" autocomplete="off">
-        <input
-          class="yt-custom-rec-input"
-          type="text"
-          name="prompt"
-          placeholder='type what to see more e.g. "kanye", "guitar tutorials", "skyrim"'
-          aria-label="Feed preference"
-        />
-        <button type="submit" class="yt-custom-rec-submit" aria-label="Update feed">Update Feed</button>
+        <button type="button" class="yt-custom-rec-collapse" aria-label="Hide feed controls" aria-expanded="true" title="Hide">
+          <svg class="yt-custom-rec-collapse-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M7.41 15.41 12 10.83l4.59 4.58L18 14l-6-6-6 6z"></path>
+          </svg>
+        </button>
+        <div class="yt-custom-rec-searchbox">
+          <input
+            class="yt-custom-rec-input"
+            type="text"
+            name="prompt"
+            placeholder='type what to see more e.g. "kanye", "guitar tutorials", "skyrim"'
+            aria-label="Feed preference"
+          />
+          <button type="submit" class="yt-custom-rec-submit" aria-label="Update feed">Update Feed</button>
+        </div>
         <button type="button" class="yt-custom-rec-default" aria-label="Restore default YouTube feed">Default</button>
       </form>
       <div class="yt-custom-rec-tags" role="list" aria-label="Active topics"></div>
@@ -284,7 +288,7 @@
     };
     storageSet({ [PLAN_KEY]: blendPlan });
 
-    const applied = applyBlendToFeed(blendPlan, pageMode);
+    const applied = applyBlendToFeed(blendPlan, pageMode, { reset: true });
     if (!applied?.ok) {
       setStatus(formRoot, applied?.error || 'Could not update blend', true);
       return;
@@ -371,15 +375,6 @@
     }
   }
 
-  function restoreShortsSlots() {
-    document.querySelectorAll(`[${REEL_SLOT_ATTR}]`).forEach((el) => {
-      el.style.removeProperty('display');
-      el.removeAttribute(REEL_SLOT_ATTR);
-    });
-    document.querySelectorAll('.yt-custom-rec-short-card').forEach((el) => el.remove());
-    document.querySelectorAll('.yt-custom-rec-shorts-strip').forEach((el) => el.remove());
-  }
-
   function restoreNativeSlots() {
     document
       .querySelectorAll(`ytd-rich-item-renderer[${SLOT_ATTR}], ytd-compact-video-renderer[${SLOT_ATTR}]`)
@@ -388,7 +383,6 @@
         el.removeAttribute(SLOT_ATTR);
       });
     document.querySelectorAll('.yt-custom-rec-in-grid').forEach((el) => el.remove());
-    restoreShortsSlots();
   }
 
   function purgeLegacyReplaceState(stored) {
@@ -419,101 +413,6 @@
     }
   }
 
-  function formatShortViews(video) {
-    const views = formatViewCount(video.viewCount);
-    return views || '';
-  }
-
-  function mirrorShortItemLayout(card, nativeEl) {
-    if (!nativeEl?.isConnected) return;
-    if (nativeEl.closest('ytd-rich-item-renderer')) return;
-    try {
-      const layoutEl =
-        nativeEl.closest('ytm-shorts-lockup-view-model-v2, ytd-shorts-lockup-view-model') ||
-        nativeEl.closest('ytd-reel-item-renderer') ||
-        nativeEl;
-      const cs = window.getComputedStyle(layoutEl);
-      card.style.flex = cs.flex;
-      card.style.flexBasis = cs.flexBasis;
-      card.style.flexGrow = cs.flexGrow;
-      card.style.flexShrink = cs.flexShrink;
-      card.style.width = cs.width;
-      card.style.minWidth = cs.minWidth;
-      card.style.maxWidth = cs.maxWidth;
-      card.style.margin = cs.margin;
-      card.style.padding = cs.padding;
-      card.style.boxSizing = cs.boxSizing;
-      card.style.display = cs.display === 'inline' ? 'inline-block' : cs.display;
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function measureShortItemWidth(shelf) {
-    const sample = queryShortItemsInShelf(shelf).find((el) => !el.classList.contains('yt-custom-rec-short-card'));
-    if (!sample?.isConnected) return null;
-    return window.getComputedStyle(sample).width;
-  }
-
-  function createShortCard(video, layoutNative) {
-    const el = document.createElement('div');
-    el.className = 'yt-custom-rec-short-card';
-    el.setAttribute('role', 'presentation');
-
-    const thumb = escapeHtml(video.thumbnailUrl);
-    const title = escapeHtml(video.title);
-    const views = escapeHtml(formatShortViews(video));
-    const href = `https://www.youtube.com/shorts/${encodeURIComponent(video.videoId)}`;
-
-    el.innerHTML = `
-      <div class="yt-custom-rec-short-lockup">
-        <a class="yt-custom-rec-short-thumb-link" href="${href}" aria-label="${title}">
-          <div class="yt-custom-rec-short-thumb">
-            <img class="yt-custom-rec-short-thumb-img" src="${thumb}" alt="" loading="lazy" />
-          </div>
-        </a>
-        <div class="yt-custom-rec-short-meta">
-          <div class="yt-custom-rec-short-text">
-            <h3 class="yt-custom-rec-short-title">
-              <a class="yt-custom-rec-short-title-link" href="${href}" title="${title}">${title}</a>
-            </h3>
-            ${views ? `<div class="yt-custom-rec-short-views">${views}</div>` : ''}
-          </div>
-          <button type="button" class="yt-custom-rec-short-menu" aria-hidden="true" tabindex="-1">
-            <svg class="yt-custom-rec-short-menu-icon" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-              <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"></path>
-            </svg>
-          </button>
-        </div>
-      </div>
-    `;
-
-    if (layoutNative) {
-      mirrorShortItemLayout(el, layoutNative);
-    }
-    return el;
-  }
-
-  function walkDomDeep(root, visit) {
-    if (!root) return;
-    const stack = [root];
-    while (stack.length) {
-      const node = stack.pop();
-      if (node.nodeType !== 1) continue;
-      visit(node);
-      if (node.shadowRoot) stack.push(node.shadowRoot);
-      for (let i = node.children.length - 1; i >= 0; i--) stack.push(node.children[i]);
-    }
-  }
-
-  function queryDeep(root, selector) {
-    const found = [];
-    walkDomDeep(root, (el) => {
-      if (el.matches?.(selector)) found.push(el);
-    });
-    return found;
-  }
-
   function getReplaceRatio(topicCount) {
     if (topicCount >= 3) return 0.9;
     if (topicCount === 2) return 0.65;
@@ -532,172 +431,40 @@
     return [...new Set(indices)].sort((a, b) => a - b);
   }
 
-  function getReelShelves() {
-    const grid = getHomeGrid();
-    const contents = grid && qs('#contents', grid);
-    const primary = getPrimaryColumn();
-    const scopes = [];
-    if (contents) scopes.push(contents);
-    if (primary && primary !== contents) scopes.push(primary);
-
-    const shelves = new Set();
-    const shelfSel = 'ytd-reel-shelf-renderer, ytd-rich-shelf-renderer, grid-shelf-view-model';
-
-    for (const scope of scopes) {
-      for (const el of queryDeep(scope, shelfSel)) {
-        shelves.add(el);
-      }
-      for (const section of scope.querySelectorAll('ytd-rich-section-renderer')) {
-        const inner = queryDeep(section, shelfSel)[0];
-        if (inner) shelves.add(inner);
-      }
+  function videoThumbUrl(video) {
+    const id = video?.videoId;
+    if (!id) return '';
+    const raw = String(video.thumbnailUrl || '').trim();
+    if (raw.startsWith('https://i.ytimg.com/') || raw.startsWith('https://yt3.ggpht.com/')) {
+      return raw;
     }
-    return [...shelves];
+    if (raw.startsWith('//')) return `https:${raw}`;
+    if (raw) return raw;
+    return `https://i.ytimg.com/vi/${encodeURIComponent(id)}/hqdefault.jpg`;
   }
 
-  function getShortsShelfMount(shelf) {
-    if (!shelf) return null;
-    const items = queryDeep(shelf, '#items');
-    if (items.length) return items[0];
-    const scroll = queryDeep(shelf, '#scroll-container');
-    return scroll[0] || null;
-  }
-
-  function queryShortItemsInShelf(shelf) {
-    const selectors = [
-      'ytd-reel-item-renderer',
-      'ytm-shorts-lockup-view-model-v2',
-      'ytd-shorts-lockup-view-model',
-      'ytm-shorts-lockup-view-model',
-    ];
-    const seen = new Set();
-    const items = [];
-    for (const selector of selectors) {
-      for (const el of queryDeep(shelf, selector)) {
-        if (seen.has(el)) continue;
-        seen.add(el);
-        items.push(el);
-      }
-    }
-    if (items.length) return items;
-
-    walkDomDeep(shelf, (el) => {
-      if (el.tagName !== 'A') return;
-      const href = el.getAttribute('href') || '';
-      if (!href.includes('/shorts/')) return;
-      const wrap = el.closest(
-        'ytd-reel-item-renderer, ytm-shorts-lockup-view-model-v2, ytd-shorts-lockup-view-model, ytm-shorts-lockup-view-model'
-      );
-      if (!wrap || seen.has(wrap)) return;
-      seen.add(wrap);
-      items.push(wrap);
-    });
-    return items;
-  }
-
-  function hideNativeShortNodes(shelf) {
-    for (const el of queryShortItemsInShelf(shelf)) {
-      if (el.classList.contains('yt-custom-rec-short-card')) continue;
-      el.setAttribute(REEL_SLOT_ATTR, '1');
-      el.style.setProperty('display', 'none', 'important');
-    }
-  }
-
-  function topicsHaveShortsPool(topics) {
-    return topics.some((t) => Array.isArray(t.shortsBoostVideos) && t.shortsBoostVideos.length > 0);
-  }
-
-  function createShortsVideoPicker(topics) {
-    const usedIds = new Set();
-    let rotate = 0;
-
-    return function nextShortVideo() {
-      for (let attempt = 0; attempt < topics.length * 4; attempt++) {
-        const topic = topics[rotate % topics.length];
-        rotate++;
-        const pool = (topic.shortsBoostVideos || []).filter((v) => v?.isShort !== false);
-        const pick = pickBoostVideos(pool, usedIds, 1)[0];
-        if (pick) {
-          usedIds.add(pick.videoId);
-          return pick;
-        }
-      }
-      return null;
-    };
-  }
-
-  function injectShortsStrip(shelf, topics, count) {
-    const mount = getShortsShelfMount(shelf);
-    if (!mount) return;
-
-    let strip = mount.querySelector(':scope > .yt-custom-rec-shorts-strip');
-    if (!strip) {
-      strip = document.createElement('div');
-      strip.className = 'yt-custom-rec-shorts-strip';
-      mount.insertBefore(strip, mount.firstChild);
-    }
-
-    const sampleWidth = measureShortItemWidth(shelf);
-    if (sampleWidth) {
-      strip.style.setProperty('--yt-custom-rec-short-width', sampleWidth);
-    }
-
-    strip.innerHTML = '';
-    const nextVideo = createShortsVideoPicker(topics);
-    for (let i = 0; i < count; i++) {
-      const video = nextVideo();
-      if (!video) break;
-      strip.appendChild(createShortCard(video));
-    }
-  }
-
-  function applyBoostToShortsShelves(topics) {
-    restoreShortsSlots();
-    if (!topics.length || !topicsHaveShortsPool(topics)) return;
-
-    const replaceRatio = getReplaceRatio(topics.length);
-    const shortsReplaceRatio = replaceRatio >= 0.9 ? 0.95 : Math.min(0.85, replaceRatio + 0.15);
-    const nextVideo = createShortsVideoPicker(topics);
-
-    for (const shelf of getReelShelves()) {
-      const items = queryShortItemsInShelf(shelf);
-      const targetCount = items.length
-        ? Math.max(1, Math.ceil(items.length * shortsReplaceRatio))
-        : SHORTS_PER_SHELF;
-
-      if (!items.length) {
-        injectShortsStrip(shelf, topics, Math.max(SHORTS_PER_SHELF, targetCount));
-        hideNativeShortNodes(shelf);
-        continue;
-      }
-
-      let placed = 0;
-      for (let i = 0; i < items.length && placed < targetCount; i++) {
-        const video = nextVideo();
-        if (!video) break;
-
-        const native = items[i];
-        const parent = native.parentElement;
-        if (!parent || !native.isConnected) continue;
-
-        const card = createShortCard(video, native);
-        native.setAttribute(REEL_SLOT_ATTR, '1');
-        native.style.setProperty('display', 'none', 'important');
-        parent.insertBefore(card, native);
-        placed++;
-      }
-
-      if (placed === 0) {
-        injectShortsStrip(shelf, topics, SHORTS_PER_SHELF);
-      }
-    }
+  function bindCardThumbnail(card, video) {
+    const img = card.querySelector('.yt-custom-rec-thumb-img');
+    if (!img) return;
+    const url = videoThumbUrl(video);
+    img.src = url;
+    img.decoding = 'async';
+    img.referrerPolicy = 'origin';
+    img.addEventListener(
+      'error',
+      () => {
+        const fallback = `https://i.ytimg.com/vi/${encodeURIComponent(video.videoId)}/mqdefault.jpg`;
+        if (img.src !== fallback) img.src = fallback;
+      },
+      { once: true }
+    );
   }
 
   function createRichCard(video, extraClass = '') {
     const item = document.createElement('div');
     item.className = `yt-custom-rec-card yt-custom-rec-rich-card ${extraClass}`.trim();
 
-    const thumb = escapeHtml(video.thumbnailUrl);
+    const thumb = escapeHtml(videoThumbUrl(video));
     const title = escapeHtml(video.title);
     const href = `https://www.youtube.com/watch?v=${encodeURIComponent(video.videoId)}`;
     const metaLine = escapeHtml(formatMetaLine(video));
@@ -706,7 +473,7 @@
     item.innerHTML = `
       <a class="yt-custom-rec-thumb-wrap" href="${href}" aria-label="${title}">
         <div class="yt-custom-rec-thumb">
-          <img class="yt-custom-rec-thumb-img" src="${thumb}" alt="" loading="lazy" />
+          <img class="yt-custom-rec-thumb-img" src="${thumb}" alt="" width="480" height="270" decoding="async" referrerpolicy="origin" />
         </div>
       </a>
       <div class="yt-custom-rec-rich-meta">
@@ -716,6 +483,7 @@
         ${metaLine ? `<p class="yt-custom-rec-meta-line">${metaLine}</p>` : ''}
       </div>
     `;
+    bindCardThumbnail(item, video);
     return item;
   }
 
@@ -849,8 +617,8 @@
     });
   }
 
-  function fetchBoost(searchTerm, maxBoost, shortsOnly = false) {
-    return sendBackgroundMessage({ type: 'FETCH_BOOST', searchTerm, maxBoost, shortsOnly });
+  function fetchBoost(searchTerm, maxBoost) {
+    return sendBackgroundMessage({ type: 'FETCH_BOOST', searchTerm, maxBoost });
   }
 
   function pickBoostVideos(boostVideos, blockedIds, maxBoost) {
@@ -976,14 +744,16 @@
     return slotMap;
   }
 
-  function applyBlendToFeed(plan, pageMode) {
+  function findBlendCard(index) {
+    return document.querySelector(`.yt-custom-rec-in-grid[data-slot-index="${index}"]`);
+  }
+
+  function applyBlendToFeed(plan, pageMode, options = {}) {
     try {
       const topics = normalizeTopics(plan);
       if (!topics.length) {
         return { ok: false, error: 'No blend topics saved' };
       }
-
-      prepareForBlend();
 
       const isHome = pageMode === 'rich';
       const nativeItems = isHome ? getNativeRichItemElements() : getNativeCompactItemElements();
@@ -1001,9 +771,40 @@
         return { ok: false, error: 'No new boost videos to mix in (all duplicates).' };
       }
 
+      const shouldReset = options.reset === true;
+      if (shouldReset) {
+        prepareForBlend();
+      } else {
+        removeReplaceGrid();
+      }
+
       let replaced = 0;
-      for (const [index, entry] of slotMap.entries()) {
+      let kept = 0;
+
+      for (let index = 0; index < nativeItems.length; index++) {
         const nativeEl = nativeItems[index];
+        const entry = slotMap.get(index);
+        const existing = findBlendCard(index);
+
+        if (!entry) {
+          if (existing) existing.remove();
+          if (nativeEl?.isConnected) {
+            nativeEl.style.removeProperty('display');
+            nativeEl.removeAttribute(SLOT_ATTR);
+          }
+          continue;
+        }
+
+        if (existing?.dataset.videoId === entry.video.videoId) {
+          kept++;
+          if (nativeEl?.isConnected && !nativeEl.hasAttribute(SLOT_ATTR)) {
+            nativeEl.setAttribute(SLOT_ATTR, '1');
+            nativeEl.style.setProperty('display', 'none', 'important');
+          }
+          continue;
+        }
+
+        if (existing) existing.remove();
         if (!nativeEl?.isConnected) continue;
         const parent = nativeEl.parentElement;
         if (!parent) continue;
@@ -1025,15 +826,17 @@
         replaced++;
       }
 
-      if (replaced === 0) {
+      document.querySelectorAll('.yt-custom-rec-in-grid').forEach((card) => {
+        const idx = Number(card.dataset.slotIndex);
+        if (!slotMap.has(idx)) card.remove();
+      });
+
+      if (replaced === 0 && kept === 0) {
         return { ok: false, error: 'Could not place boost videos in the feed' };
       }
 
       setFeedMode('blend');
-      if (isHome) {
-        applyBoostToShortsShelves(topics);
-      }
-      return { ok: true, replaced, topics };
+      return { ok: true, replaced: replaced + kept, topics };
     } catch (err) {
       return { ok: false, error: err?.message || 'Blend failed' };
     }
@@ -1092,23 +895,16 @@
 
       setStatus(formRoot, `Fetching ${term}…`);
       const poolSize = Math.max(MAX_BOOST, 48);
-      const [boostResult, shortsResult] = await Promise.all([
-        fetchBoost(term, poolSize, false),
-        fetchBoost(term, poolSize, true),
-      ]);
+      const boostResult = await fetchBoost(term, poolSize);
 
       if (!boostResult.ok || !Array.isArray(boostResult.videos) || boostResult.videos.length === 0) {
         setStatus(formRoot, boostResult.error || 'Boost fetch failed', true);
         return;
       }
 
-      const shortsBoostVideos =
-        shortsResult.ok && Array.isArray(shortsResult.videos) ? shortsResult.videos : [];
-
       const topicEntry = {
         searchTerm: term,
         boostVideos: boostResult.videos,
-        shortsBoostVideos,
       };
 
       if (existingIdx >= 0) {
@@ -1126,7 +922,7 @@
       storageSet({ [PLAN_KEY]: blendPlan });
       storageRemove(STORAGE_KEY);
 
-      const applied = applyBlendToFeed(blendPlan, pageMode);
+      const applied = applyBlendToFeed(blendPlan, pageMode, { reset: true });
       if (!applied?.ok) {
         setStatus(formRoot, applied?.error || 'Blend failed', true);
         return;
@@ -1135,11 +931,7 @@
       clearPromptInput(formRoot);
       renderTopicTags(formRoot, applied.topics, pageMode);
       clearStatusPin(formRoot);
-      if (shortsBoostVideos.length === 0) {
-        setStatus(formRoot, `Feed updated. No Shorts found for “${term}” — Shorts shelf unchanged.`, true);
-      } else {
-        setStatus(formRoot, '');
-      }
+      setStatus(formRoot, '');
     } catch (err) {
       setStatus(formRoot, extensionUserMessage(err), true);
     } finally {
@@ -1164,7 +956,7 @@
     const blendPlan = getStoredBlendPlan(plan);
     if (!blendPlan) return false;
     if (getNativeRichItemElements().length === 0) return false;
-    const applied = applyBlendToFeed(blendPlan, 'rich');
+    const applied = applyBlendToFeed(blendPlan, 'rich', { reset: false });
     return Boolean(applied?.ok);
   }
 
@@ -1182,6 +974,7 @@
       if (extensionDead || !isExtensionAlive() || !isHomeRecommendationsPage()) return;
 
       if (getNativeRichItemElements().length === 0) return;
+      if (document.querySelectorAll('.yt-custom-rec-in-grid').length > 0) return;
 
       try {
         const data = await storageGet(PLAN_KEY);
@@ -1194,10 +987,40 @@
     }, 400);
   }
 
+  function applyUiCollapsed(root, collapsed) {
+    if (!root) return;
+    root.classList.toggle('yt-custom-rec-root--collapsed', collapsed);
+    const btn = root.querySelector('.yt-custom-rec-collapse');
+    if (!btn) return;
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    btn.setAttribute('aria-label', collapsed ? 'Show feed controls' : 'Hide feed controls');
+    btn.title = collapsed ? 'Show' : 'Hide';
+  }
+
+  function setUiCollapsed(root, collapsed) {
+    applyUiCollapsed(root, collapsed);
+    storageSet({ [UI_COLLAPSED_KEY]: collapsed });
+  }
+
+  async function syncUiCollapsed(root) {
+    try {
+      const data = await storageGet(UI_COLLAPSED_KEY);
+      applyUiCollapsed(root, Boolean(data[UI_COLLAPSED_KEY]));
+    } catch {
+      applyUiCollapsed(root, false);
+    }
+  }
+
   function wireFormActions(root) {
     const form = root.querySelector('.yt-custom-rec-form');
     if (!form || form.dataset.ytCustomRecWired === '1') return;
     form.dataset.ytCustomRecWired = '1';
+
+    root.querySelector('.yt-custom-rec-collapse')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const collapsed = !root.classList.contains('yt-custom-rec-root--collapsed');
+      setUiCollapsed(root, collapsed);
+    });
 
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -1232,6 +1055,8 @@
 
     const root = injectForm();
     if (!root) return;
+
+    await syncUiCollapsed(root);
 
     if (!isExtensionAlive()) {
       setStatus(root, RELOAD_TAB_MSG, true);

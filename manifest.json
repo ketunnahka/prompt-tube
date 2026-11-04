@@ -1,8 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Custom Recommendations",
+  "name": "Youtube Recommendation Fixer",
   "version": "1.0.0",
-  "description": "Replace YouTube recommendation feeds with prompt-driven search results.",
+  "description": "Adjust YouTube recommendations to your needs.",
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
   "permissions": ["scripting", "storage"],
   "host_permissions": ["*://*.youtube.com/*"],
   "background": {
